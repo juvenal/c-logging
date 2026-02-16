@@ -1,0 +1,67 @@
+# Build directories
+build/
+bin/
+obj/
+out/
+dist/
+target/
+
+# Compiled files
+*.o
+*.a
+*.so
+*.exe
+*.dll
+*.dylib
+*.lib
+*.obj
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# C++ specific
+Debug/
+Release/
+x64/
+x86/
+ipch/
+
+# Temporary files
+*.bak
+*.backup
+*.orig
+*.save
+*~
+.#*
+.*.swp
+.*.swo
+
+# Test outputs
+test-results/
+coverage/
+*.gcda
+*.gcno
+
+# Package managers
+node_modules/
+vendor/
+.pip_cache/
