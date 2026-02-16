@@ -1,4 +1,4 @@
-#include "logging.hpp"
+#include "../src/include/logging.hpp"
 #include <fstream>
 
 int main() {

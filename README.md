@@ -21,12 +21,12 @@ To include the implementation, define `LOGGING_IMPLEMENTATION` in **exactly one*
 
 ```c
 #define LOGGING_IMPLEMENTATION
-#include "logging.h"
+#include "src/include/logging.h"
 ```
 
 In all other files, simply include the header:
 ```c
-#include "logging.h"
+#include "src/include/logging.h"
 ```
 
 ### Usage & Instrumentation
@@ -57,7 +57,7 @@ Designed for C++20 projects leveraging modern type safety and formatting.
 Simply include the header. No implementation define is required as it uses `inline` definitions.
 
 ```cpp
-#include "logging.hpp"
+#include "src/include/logging.hpp"
 ```
 
 **Note**: Requires a compiler supporting C++20 (specifically `std::source_location` and `std::format`), such as Clang 13+, GCC 11+, or MSVC 19.29+.
@@ -66,12 +66,12 @@ Simply include the header. No implementation define is required as it uses `inli
 Use `std::format` syntax for clean, type-safe logging:
 
 ```cpp
-#include "logging.hpp"
+#include "src/include/logging.hpp"
 #include <fstream>
 
 int main() {
     set_log_level(LogLevel::DEBUG);
-    
+
     int user_id = 101;
     log_debug("Fetching record for user_id: {}", user_id);
 
@@ -104,12 +104,29 @@ Using this library for instrumentation helps you understand your program's flow:
 
 **C Example:**
 ```bash
-clang main.c -o app
+clang tests/main.c -o app
 ./app
 ```
 
 **C++20 Example:**
 ```bash
-clang++ -std=c++20 main_cpp20.cpp -o app_cpp20
+clang++ -std=c++20 tests/main_cpp20.cpp -o app_cpp20
 ./app_cpp20
+```
+
+## Project Structure
+
+The project follows a standard C/C++ library structure:
+
+```
+c-logging/
+├── src/
+│   └── include/
+│       ├── logging.h    # C header file
+│       └── logging.hpp  # C++ header file
+├── tests/
+│   ├── main.c          # C example/test
+│   └── main_cpp20.cpp  # C++ example/test
+├── README.md
+└── ...
 ```

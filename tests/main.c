@@ -1,5 +1,5 @@
 #define LOGGING_IMPLEMENTATION
-#include "logging.h"
+#include "../src/include/logging.h"
 
 int main() {
     // 1. Log to stdout, default level INFO

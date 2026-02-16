@@ -267,25 +267,10 @@ void log(LogLevel level, LogMessage msg, Args&&... args) {
     }
 }
 
-// Convenience wrappers
-template <typename... Args>
-void log_debug(LogMessage msg, Args&&... args) {
-    log(LogLevel::DEBUG, msg, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void log_info(LogMessage msg, Args&&... args) {
-    log(LogLevel::INFO, msg, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void log_warn(LogMessage msg, Args&&... args) {
-    log(LogLevel::WARN, msg, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-void log_error(LogMessage msg, Args&&... args) {
-    log(LogLevel::ERROR, msg, std::forward<Args>(args)...);
-}
+// Convenience macros to ensure source location is captured at call site
+#define log_debug(fmt, ...) log(LogLevel::DEBUG, LogMessage{fmt}, ##__VA_ARGS__)
+#define log_info(fmt, ...) log(LogLevel::INFO, LogMessage{fmt}, ##__VA_ARGS__)
+#define log_warn(fmt, ...) log(LogLevel::WARN, LogMessage{fmt}, ##__VA_ARGS__)
+#define log_error(fmt, ...) log(LogLevel::ERROR, LogMessage{fmt}, ##__VA_ARGS__)
 
 #endif // LOGGING_HPP
