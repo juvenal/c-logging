@@ -1,108 +1,171 @@
 # Developer Documentation
 
-This document provides technical details on the internal workings of the C and C++20 logging libraries, along with a roadmap for future improvements and architectural considerations.
-
-## Technical Architecture
-
-### 1. C Implementation (`logging.h`)
-
-The C library follows the **STB single-header library** convention.
-
-*   **State Management**:
-    *   Uses global static variables `_log_output` (`FILE*`) and `_log_level` (`LogLevel`) to maintain state.
-    *   These are instantiated only when `LOGGING_IMPLEMENTATION` is defined.
-*   **Macro Magic**:
-    *   The `LOG` macro handles the logic: checking the log level, generating the timestamp, and calling `fprintf`.
-    *   It uses `snprintf` to format the timestamp into a stack-allocated buffer (`_time_buf`) to avoid dynamic allocation.
-    *   **Variadic Macros**: `__VA_ARGS__` are passed directly to `fprintf`, preserving standard `printf` behavior.
-*   **Timestamp Precision**:
-    *   Uses `timespec_get` (C11) to obtain wall-clock time with nanosecond precision, truncated to milliseconds for display.
-    *   *Note*: The current implementation uses `localtime`, which returns a pointer to a static buffer. This makes the standard implementation **not thread-safe**.
-
-### 2. C++20 Implementation (`logging.hpp`)
-
-The C++ library leverages modern language features for type safety and performance.
-
-*   **Modern Features**:
-    *   `std::source_location`: Automatically captures file name and line number at the call site without macros.
-    *   `std::format`: Provides type-safe, Python-like string formatting, superior to `printf` in safety and extensibility.
-    *   `std::string_view`: Reduces string copying when passing format strings.
-*   **State Management**:
-    *   Uses `inline` global variables (`current_log_level`, `log_output`) to allow the header to be included in multiple translation units without ODR (One Definition Rule) violations.
-*   **Thread Safety**:
-    *   Uses `localtime_r` for thread-safe time structure generation.
-    *   *Constraint*: While the time generation is safe, writing to `std::ostream` without a mutex or `std::osyncstream` (C++20) may result in interleaved output if multiple threads log simultaneously.
+Technical reference for contributors and maintainers of the C/C++20 logging library.
 
 ---
 
-## Roadmap & Potential Expansions
+## Standards supported
 
-The following features are identified as high-value improvements for future iterations.
+| Header | Standard | Required features |
+|---|---|---|
+| `logging.h` | C17 | `timespec_get`, variadic macros |
+| `logging.hpp` | **C++20 only** | `std::source_location`, `std::format`, `std::vformat`, inline variables |
 
-### 1. Structured Logging (JSON)
+`logging.hpp` enforces its requirement at the preprocessor level:
 
-**Goal**: Output logs in a machine-parseable format for ingestion by tools like ELK Stack, Splunk, or Datadog.
+```cpp
+#if __cplusplus < 202002L
+    #error "logging.hpp requires C++20 or later"
+#endif
+```
 
-**Proposed Format**:
-```json
-{
-  "timestamp": "2023-10-27T10:00:00.123Z",
-  "level": "ERROR",
-  "location": {
-    "file": "main.cpp",
-    "line": 42
-  },
-  "message": "Connection timeout",
-  "context": {
-    "user_id": 101,
-    "retry_count": 3
-  }
+Attempting to compile with `-std=c++17` or earlier produces an immediate `#error`. There are no preprocessor fallback branches, no compatibility shims, and no standard-detection macros (`LOGGING_CPP17`, etc.) — those were removed when the multi-standard ladder was replaced by the single guard above.
+
+---
+
+## Technical architecture
+
+### C implementation (`logging.h`)
+
+Follows the **STB single-header library** convention.
+
+- **State**: Two global static variables, `_log_output` (`FILE*`) and `_log_level` (`LogLevel`), instantiated only when `LOGGING_IMPLEMENTATION` is defined.
+- **Macros**: The `LOG` macro checks the level, formats a timestamp with `snprintf` into a stack buffer, then calls `fprintf`. `__VA_ARGS__` are forwarded directly, preserving standard `printf` semantics.
+- **Timestamps**: `timespec_get` (C11/C17) for wall-clock time with nanosecond resolution, displayed at millisecond precision.
+- **Thread safety**: Uses `localtime` — **not thread-safe**. See roadmap item 2.
+
+### C++20 implementation (`logging.hpp`)
+
+The entire header is ~78 lines with no conditional compilation.
+
+#### Global state
+
+```cpp
+inline LogLevel      current_log_level = LogLevel::INFO;
+inline std::ostream* log_output        = &std::clog;
+```
+
+`inline` variables (C++17+) allow the header to be included in multiple translation units without ODR violations. No function accessors or macros alias these variables.
+
+#### Source location capture — `LogMessage`
+
+```cpp
+struct LogMessage {
+    std::string_view     fmt;
+    std::source_location loc;
+
+    template <typename S>
+    constexpr LogMessage(const S& s,
+                         std::source_location l = std::source_location::current())
+        : fmt(s), loc(l) {}
+};
+```
+
+`std::source_location::current()` as a *default function-parameter value* is evaluated at the call site, not inside the header. This is the canonical C++20 pattern for zero-overhead call-site capture. The convenience macros (`log_info`, etc.) construct `LogMessage{fmt}` at the macro expansion point, which is in the user's file — so `loc` always records the caller's file and line.
+
+#### Formatting — `log()`
+
+```cpp
+template <typename... Args>
+void log(LogLevel level, LogMessage msg, Args&&... args) {
+    ...
+    const std::string message = std::vformat(msg.fmt, std::make_format_args(args...));
+    *log_output << std::format("[{}.{:03d}] [{}] {}:{}: {}\n", ...);
+    log_output->flush();
 }
 ```
 
-**Implementation Strategy**:
-*   **C**: Create a parallel set of macros (e.g., `LOG_JSON_INFO`) that formatting the output as a JSON string.
-*   **C++**: Create a `LogFormatter` strategy pattern. The `log` function could accept a formatting policy (Text vs. JSON).
+- `std::vformat` + `std::make_format_args` handle the user's format string and arguments. Format errors (bad specifiers, wrong argument count) are **not** caught — they propagate as `std::format_error`, making bugs visible immediately.
+- `localtime_r` (POSIX) is used for thread-safe time conversion.
+- There is no `try/catch` block suppressing exceptions.
 
-### 2. Thread Safety Enhancements
+#### Why macros for the log calls?
 
-**C Library**:
-*   Replace `localtime` with `localtime_r` (POSIX) or `localtime_s` (Windows) to fix race conditions on the time buffer.
-*   Introduce an optional mutex callback for the `LOG` macro to lock the file stream during the `fprintf` call.
+`log_debug`, `log_info`, `log_warn`, `log_error` are macros, not inline functions:
 
-**C++ Library**:
-*   Wrap the output stream insertion in `std::osyncstream` (available in C++20 headers `<syncstream>`) to guarantee atomic output of the entire log line.
+```cpp
+#define log_info(fmt, ...) log(LogLevel::INFO, LogMessage{fmt}, ##__VA_ARGS__)
+```
 
-### 3. Asynchronous Logging
+If they were plain inline functions, `LogMessage` would be constructed inside the function body and `source_location::current()` would capture the library file, not the user's file. The macro forces `LogMessage{fmt}` to be constructed at the call site.
 
-**Goal**: Decouple the logging call from the I/O operation to minimize latency in the critical path (e.g., real-time loops).
+---
 
-**Implementation Strategy**:
-*   Implement a lock-free ring buffer (SPSC or MPMC).
-*   The `log` function pushes the message and timestamp to the queue.
-*   A background thread wakes up to drain the queue and write to disk/network.
+## Output format
 
-### 4. Multiple Sinks (Outputs)
+```
+[HH:MM:SS.mmm] [LEVEL] file:line: message
+```
 
-**Goal**: Allow logging to multiple destinations simultaneously (e.g., Console for development + File for persistence).
+`LEVEL` is always 5 characters wide (`DEBUG`, `INFO `, `WARN `, `ERROR`) to keep columns aligned.
 
-**Implementation Strategy**:
-*   **C++**: Change `log_output` from a single pointer to a `std::vector<std::ostream*>`. Iterate through all registered streams when logging.
-*   **C**: Allow registering a custom callback function `void (*log_callback)(const char* msg)` instead of just a raw `FILE*`.
+---
 
-### 5. Color Support (ANSI)
+## Building and testing
 
-**Goal**: Improve readability during local development.
+```bash
+make clean && make    # full rebuild
+make test             # run C and C++20 examples
 
-**Implementation Strategy**:
-*   Detect if the output stream is a TTY.
-*   Inject ANSI escape codes (e.g., `\033[31m` for Red/Error) into the format string based on the `LogLevel`.
-*   Ensure these codes are stripped when logging to files.
+# Syntax-only checks
+g++ -std=c++17 -fsyntax-only src/include/logging.hpp   # must error
+g++ -std=c++20 -Wall -Wextra -Wpedantic -fsyntax-only src/include/logging.hpp  # must pass
 
-### 6. Log Rotation
+# Source-location regression test
+g++ -std=c++20 -Wall -Isrc/include tests/test_fix_verification.cpp -o /tmp/test_fix && /tmp/test_fix
+```
 
-**Goal**: Prevent log files from consuming infinite disk space.
+---
 
-**Implementation Strategy**:
-*   Track the number of bytes written to the file.
-*   When a threshold (e.g., 10MB) is reached, close the current file, rename it (e.g., `app.log.1`), and open a fresh `app.log`.
+## Roadmap & potential expansions
+
+### 1. Structured logging (JSON)
+
+Output machine-parseable logs for ingestion by ELK Stack, Splunk, Datadog, etc.
+
+```json
+{
+  "timestamp": "2026-02-19T14:23:07.412Z",
+  "level": "ERROR",
+  "location": { "file": "src/network.cpp", "line": 88 },
+  "message": "Connection failed: code 503"
+}
+```
+
+**C++**: A `LogFormatter` policy passed to `log()` (Text vs. JSON strategy pattern).
+**C**: Parallel macro set (e.g., `LOG_JSON_ERROR`) that formats to JSON strings.
+
+### 2. Thread safety enhancements
+
+**C library**: Replace `localtime` with `localtime_r` (POSIX) / `localtime_s` (Windows) to fix the static-buffer race.
+**C++ library**: Wrap stream writes in `std::osyncstream` (`<syncstream>`, C++20) to guarantee atomic output of a complete log line when multiple threads log simultaneously.
+
+### 3. Asynchronous logging
+
+Decouple the `log()` call from I/O to minimize latency on critical paths (real-time loops, hot paths).
+
+- Lock-free SPSC or MPMC ring buffer.
+- `log()` pushes the pre-formatted message and timestamp onto the queue.
+- A dedicated background thread drains the queue to disk or network.
+
+### 4. Multiple sinks
+
+Allow a single `log()` call to write to several destinations simultaneously (console + file + network).
+
+**C++**: Change `log_output` from `std::ostream*` to `std::vector<std::ostream*>`.
+**C**: Accept a callback `void (*log_callback)(const char* msg)` alongside the `FILE*`.
+
+### 5. ANSI color support
+
+Improve readability during local development.
+
+- Detect TTY via `isatty()`.
+- Inject ANSI escape codes per level (e.g., `\033[31m` for ERROR).
+- Strip codes automatically when output is not a TTY (file, pipe).
+
+### 6. Log rotation
+
+Prevent log files from growing without bound.
+
+- Track bytes written to the current file.
+- At threshold (e.g., 10 MB), close, rename to `app.log.1`, and open fresh `app.log`.
